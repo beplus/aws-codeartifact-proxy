@@ -6,11 +6,17 @@ import (
 )
 
 func main() {
+	tools.Init()
+
 	// Do an initial authentication so that we can initialise the proxy properly
-	tools.Authenticate()
+	tools.Authenticate("dev")
+	tools.Authenticate("stage")
+	tools.Authenticate("prod")
 
 	// Run a goroutine to check for reauthentication to the CodeArtifact Service
-	go tools.CheckReauth()
+	go tools.CheckReauth("dev")
+	go tools.CheckReauth("stage")
+	go tools.CheckReauth("prod")
 
 	// Start the Proxy listener so that we can intercept the requests
 	tools.ProxyInit()

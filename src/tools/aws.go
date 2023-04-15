@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 )
@@ -24,16 +25,21 @@ var CodeArtifactAuthInfo = &CodeArtifactAuthInfoStruct{}
 func Authenticate() {
 	log.Printf("Authenticating against CodeArtifact")
 
+	codeArtRegion := aws.String(os.Getenv("AWS_REGION"))
+	codeArtDomain := aws.String(os.Getenv("CODEARTIFACT_DOMAIN"))
+	codeArtOwner := aws.String(os.Getenv("CODEARTIFACT_OWNER"))
+	codeArtRepo := aws.String(os.Getenv("CODEARTIFACT_REPO"))
+
+	awsAccessKeyId := aws.String(os.Getenv("AWS_ACCESS_KEY_ID"))
+	awsSecretAccessKey := aws.String(os.Getenv("AWS_SECRET_ACCESS_KEY"))
+	awsSessionToken := aws.String(os.Getenv("AWS_SESSION_TOKEN"))
+	
 	// Authenticate against CodeArtifact
-	cfg, cfgErr := config.LoadDefaultConfig(context.TODO())
+	cfg, cfgErr := config.LoadDefaultConfig(context.TODO(), config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(aws.ToString(awsAccessKeyId), aws.ToString(awsSecretAccessKey), aws.ToString(awsSessionToken))), config.WithRegion(aws.ToString(codeArtRegion)))
 	if cfgErr != nil {
 		log.Fatalf("unable to load SDK config, %v", cfgErr)
 	}
 	svc := codeartifact.NewFromConfig(cfg)
-
-	codeArtDomain := aws.String(os.Getenv("CODEARTIFACT_DOMAIN"))
-	codeArtOwner, codeArtOwnerFound := os.LookupEnv("CODEARTIFACT_OWNER")
-	codeArtRepos := aws.String(os.Getenv("CODEARTIFACT_REPO"))
 
 	// Resolve Package Format from the environment variable (defaults to pypi)
 	codeArtTypeS, found := os.LookupEnv("CODEARTIFACT_TYPE")
@@ -55,12 +61,12 @@ func Authenticate() {
 	authInput := &codeartifact.GetAuthorizationTokenInput{
 		DurationSeconds: aws.Int64(3600),
 		Domain:          codeArtDomain,
+		DomainOwner: 		 codeArtOwner,
 	}
-	if codeArtOwnerFound {
-		authInput.DomainOwner = aws.String(codeArtOwner)
-	}
+
 	authResp, authErr := svc.GetAuthorizationToken(context.TODO(), authInput)
 	if authErr != nil {
+		log.Printf("GetAuthorizationToken Response %s", authResp)
 		log.Fatalf("unable to get authorization token, %v", authErr)
 	}
 	log.Printf("Authorization successful")
@@ -69,12 +75,10 @@ func Authenticate() {
 
 	// Get the URL for the CodeArtifact Service
 	urlInput := &codeartifact.GetRepositoryEndpointInput{
-		Domain:     codeArtDomain,
-		Format:     codeArtTypeT,
-		Repository: codeArtRepos,
-	}
-	if codeArtOwnerFound {
-		urlInput.DomainOwner = aws.String(codeArtOwner)
+		Domain:      codeArtDomain,
+		Format:      codeArtTypeT,
+		Repository:  codeArtRepo,
+		DomainOwner: codeArtOwner,
 	}
 
 	urlResp, urlErr := svc.GetRepositoryEndpoint(context.TODO(), urlInput)

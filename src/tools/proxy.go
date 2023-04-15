@@ -57,19 +57,34 @@ func ProxyResponseHandler() func(*http.Response) error {
 		u, _ := url.Parse(CodeArtifactAuthInfo.Url)
 		hostname := u.Host + ":443"
 
-		// Rewrite the 301 to point from CodeArtifact URL to the proxy instead..
-		if r.StatusCode == 301 || r.StatusCode == 302 {
-			location, _ := r.Location()
+		// @todo Why this was here?
+		// The request flows like this:
+		// 1. Original request from NPM:
+		//    - https://npm.beplus.cloud/@bepluscloud-aws/components
+		//    Proxy rewrites to:
+		//    - https://bepluscloud-dev-379737076335.d.codeartifact.us-east-1.amazonaws.com/npm/bepluscloud-dev/@bepluscloud-aws/components
+		// 2. Next request is based on the response from the previous one, and goes to:
+	  //    - https://npm.beplus.cloud/@bepluscloud-aws/components/-/components-0.66.0.tgz
+		//    Proxy rewrites to:
+		//    - https://bepluscloud-dev-379737076335.d.codeartifact.us-east-1.amazonaws.com/npm/bepluscloud-dev/@bepluscloud-aws/components/-/components-0.66.0.tgz
+		// 3. Next request is based on the response from the previous one, and goes to:
+		//    - https://assets-XYZ-REGION.s3.amazonaws.com/HASH/UUID1/UUID2
+		//    and that should NOT be rewritten, but fulfilled.
+		// It doesn't work with the following code, but works fine when the code is commented.
+		// 
+		// Rewrite the 301 to point from CodeArtifact URL to the proxy instead.
+		// if r.StatusCode == 301 || r.StatusCode == 302 {
+		// 	location, _ := r.Location()
 
-			location.Host = originalUrl.Host
-			location.Scheme = originalUrl.Scheme
-			location.Path = strings.Replace(location.Path, u.Path, "", 1)
+		// 	location.Host = originalUrl.Host
+		// 	location.Scheme = originalUrl.Scheme
+		// 	location.Path = strings.Replace(location.Path, u.Path, "", 1)
 
-			r.Header.Set("Location", location.String())
-		}
+		// 	r.Header.Set("Location", location.String())
+		// }
 
 		// Do some quick fixes to the HTTP response for NPM install requests
-		if strings.HasPrefix(r.Request.UserAgent(), "npm") {
+		if strings.Contains(r.Request.UserAgent(), "npm") {
 
 			// Respond to only requests that respond with JSON
 			// There might eventually be additional headers i don't know about?

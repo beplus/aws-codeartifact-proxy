@@ -133,7 +133,7 @@ func ProxyInit() {
 	proxy.ModifyResponse = ProxyResponseHandler()
 
 	http.HandleFunc("/", ProxyRequestHandler(proxy))
-	err = http.ListenAndServe(":8080", nil)
+	err = http.ListenAndServe(":443", nil)
 	if err != nil {
 		panic(err)
 	}

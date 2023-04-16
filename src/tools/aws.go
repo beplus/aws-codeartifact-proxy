@@ -9,7 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 
-	"github.com/aws/aws-sdk-go-v2/credentials"
+	// "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact"
 	"github.com/aws/aws-sdk-go-v2/service/codeartifact/types"
 )
@@ -63,17 +63,18 @@ func Init() {
 func Authenticate(env string) {
 	log.Printf("Authenticating against %s CodeArtifact", env)
 
-	awsAccessKeyId := aws.String(os.Getenv("AWS_ACCESS_KEY_ID"))
-	awsSecretAccessKey := aws.String(os.Getenv("AWS_SECRET_ACCESS_KEY"))
-	awsSessionToken := aws.String(os.Getenv("AWS_SESSION_TOKEN"))
+	// awsAccessKeyId := aws.String(os.Getenv("AWS_ACCESS_KEY_ID"))
+	// awsSecretAccessKey := aws.String(os.Getenv("AWS_SECRET_ACCESS_KEY"))
+	// awsSessionToken := aws.String(os.Getenv("AWS_SESSION_TOKEN"))
 
-	codeartifactRegion := aws.String(CodeArtifactInfoMap[env].Region)
+	// codeartifactRegion := aws.String(CodeArtifactInfoMap[env].Region)
 	codeartifactOwner := aws.String(CodeArtifactInfoMap[env].Owner)
 	codeartifactDomain := aws.String(CodeArtifactInfoMap[env].Domain)
 	codeartifactRepository := aws.String(CodeArtifactInfoMap[env].Repository)
 
 	// Authenticate against CodeArtifact
-	cfg, cfgErr := config.LoadDefaultConfig(context.TODO(), config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(aws.ToString(awsAccessKeyId), aws.ToString(awsSecretAccessKey), aws.ToString(awsSessionToken))), config.WithRegion(aws.ToString(codeartifactRegion)))
+	// cfg, cfgErr := config.LoadDefaultConfig(context.TODO(), config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(aws.ToString(awsAccessKeyId), aws.ToString(awsSecretAccessKey), aws.ToString(awsSessionToken))), config.WithRegion(aws.ToString(codeartifactRegion)))
+	cfg, cfgErr := config.LoadDefaultConfig(context.TODO())
 	if cfgErr != nil {
 		log.Fatalf("unable to load SDK config, %v", cfgErr)
 	}

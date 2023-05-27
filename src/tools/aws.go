@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -28,11 +29,14 @@ type CodeArtifactAuthInfoStruct struct {
 }
 
 var CodeArtifactInfoMap = make(map[string]*CodeArtifactInfoStruct)
+var CodeArtifactInfoMapMutex = sync.RWMutex{}
+
 var CodeArtifactInfoDev = &CodeArtifactInfoStruct{}
 var CodeArtifactInfoStage = &CodeArtifactInfoStruct{}
 var CodeArtifactInfoProd = &CodeArtifactInfoStruct{}
 
 var CodeArtifactAuthInfoMap = make(map[string]*CodeArtifactAuthInfoStruct)
+var CodeArtifactAuthInfoMapMutex = sync.RWMutex{}
 
 func Init() {
 	CodeArtifactAuthInfoMap["dev"] = &CodeArtifactAuthInfoStruct{}
@@ -68,9 +72,11 @@ func Authenticate(env string) {
 	// awsSessionToken := aws.String(os.Getenv("AWS_SESSION_TOKEN"))
 
 	// codeartifactRegion := aws.String(CodeArtifactInfoMap[env].Region)
+	CodeArtifactInfoMapMutex.RLock()
 	codeartifactOwner := aws.String(CodeArtifactInfoMap[env].Owner)
 	codeartifactDomain := aws.String(CodeArtifactInfoMap[env].Domain)
 	codeartifactRepository := aws.String(CodeArtifactInfoMap[env].Repository)
+	CodeArtifactInfoMapMutex.RUnlock()
 
 	// Authenticate against CodeArtifact
 	// cfg, cfgErr := config.LoadDefaultConfig(context.TODO(), config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(aws.ToString(awsAccessKeyId), aws.ToString(awsSecretAccessKey), aws.ToString(awsSessionToken))), config.WithRegion(aws.ToString(codeartifactRegion)))
@@ -105,12 +111,15 @@ func Authenticate(env string) {
 
 	authResp, authErr := svc.GetAuthorizationToken(context.TODO(), authInput)
 	if authErr != nil {
-		log.Printf("GetAuthorizationToken Response %s", authResp)
+		log.Printf("GetAuthorizationToken Response %v", authResp)
 		log.Fatalf("unable to get authorization token, %v", authErr)
 	}
 	log.Printf("Authorization successful")
+
+	CodeArtifactAuthInfoMapMutex.Lock()
 	CodeArtifactAuthInfoMap[env].AuthorizationToken = *authResp.AuthorizationToken
 	CodeArtifactAuthInfoMap[env].LastAuth = time.Now()
+	CodeArtifactAuthInfoMapMutex.Unlock()
 
 	// Get the URL for the CodeArtifact Service
 	urlInput := &codeartifact.GetRepositoryEndpointInput{
@@ -124,22 +133,30 @@ func Authenticate(env string) {
 	if urlErr != nil {
 		log.Fatalf("unable to get repository endpoint, %v", urlErr)
 	}
-	CodeArtifactAuthInfoMap[env].Url = *urlResp.RepositoryEndpoint
 
+	CodeArtifactAuthInfoMapMutex.Lock()
+	CodeArtifactAuthInfoMap[env].Url = *urlResp.RepositoryEndpoint
+	CodeArtifactAuthInfoMapMutex.Unlock()
+
+	CodeArtifactAuthInfoMapMutex.RLock()
 	log.Printf("Requests for %s will now be proxied to %s", env, CodeArtifactAuthInfoMap[env].Url)
+	CodeArtifactAuthInfoMapMutex.RUnlock()
 }
 
 // CheckReauth checks if we have not yet authenticated, or need to authenticate within the next 15 minutes
 func CheckReauth(_env string) {
 	for {
+		CodeArtifactAuthInfoMapMutex.RLock()
+		authToken := CodeArtifactAuthInfoMap[_env].AuthorizationToken
 		timeSince := time.Since(CodeArtifactAuthInfoMap[_env].LastAuth).Minutes()
+		CodeArtifactAuthInfoMapMutex.RUnlock()
 
 		// Panic and shut down the proxy if we couldn't reauthenticate within the 15 minute window for some reason.
 		if timeSince > float64(60) {
 			log.Panic("Was unable to re-authenticate prior to our token expiring, shutting down proxy...")
 		}
 
-		if CodeArtifactAuthInfoMap[_env].AuthorizationToken == "" || timeSince > float64(45) {
+		if authToken == "" || timeSince > float64(45) {
 			log.Printf("%f minutes until the CodeArtifact token expires, attempting a reauth.", 60-timeSince)
 			Authenticate(_env)
 		}

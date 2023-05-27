@@ -11,44 +11,60 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var originalUrlResolver = make(map[string]*url.URL)
+var originalUrlResolverMutex = sync.RWMutex{}
 
 var tokenToEnvMap = make(map[string]string)
+var tokenToEnvMapMutex = sync.RWMutex{}
 
 // ProxyRequestHandler intercepts requests to CodeArtifact and add the Authorization header + correct Host header
 func ProxyRequestHandler(p *httputil.ReverseProxy) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Store the original host header for each request
+		originalUrlResolverMutex.Lock()
 		originalUrlResolver[r.RemoteAddr] = r.URL
 		originalUrlResolver[r.RemoteAddr].Host = r.Host
 		originalUrlResolver[r.RemoteAddr].Scheme = r.URL.Scheme
+		originalUrlResolverMutex.Unlock()
 
 		authToken := r.Header.Get("Authorization")
 		splitToken := strings.Split(authToken, "Bearer ")
 		authToken = splitToken[1]
+
+		tokenToEnvMapMutex.RLock()
 		authEnvReq := tokenToEnvMap[authToken]
+		tokenToEnvMapMutex.RUnlock()
 
 		log.Printf("%s → Received authToken %s for %s environment", authEnvReq, authToken, authEnvReq)
+		CodeArtifactAuthInfoMapMutex.RLock()
 		log.Printf("%s → Proxying request to URL %s", authEnvReq, CodeArtifactAuthInfoMap[authEnvReq].Url)
+		CodeArtifactAuthInfoMapMutex.RUnlock()
 
+		originalUrlResolverMutex.Lock()
 		if r.Header.Get("X-Forwarded-Proto") == "https" {
 			originalUrlResolver[r.RemoteAddr].Scheme = "https"
 		} else {
 			originalUrlResolver[r.RemoteAddr].Scheme = "http"
 		}
+		originalUrlResolverMutex.Unlock()
 
 		// Override the Host header with the CodeArtifact Host
+		CodeArtifactAuthInfoMapMutex.RLock()
 		u, _ := url.Parse(CodeArtifactAuthInfoMap[authEnvReq].Url)
+		CodeArtifactAuthInfoMapMutex.RUnlock()
 		log.Printf("%s → Host: from %s to %s", authEnvReq, r.Host, u.Host)
 		r.Host = u.Host
 
 		// Set the Authorization header with the CodeArtifact Authorization Token
+		CodeArtifactAuthInfoMapMutex.RLock()
 		r.SetBasicAuth("aws", CodeArtifactAuthInfoMap[authEnvReq].AuthorizationToken)
 
 		log.Printf("%s → Request: %s %s \"%s\" \"%s\"", authEnvReq, r.RemoteAddr, r.Method, r.URL.RequestURI(), r.UserAgent())
 		log.Printf("%s → Sending request to %s%s", authEnvReq, strings.Trim(CodeArtifactAuthInfoMap[authEnvReq].Url, "/"), r.URL.RequestURI())
+		CodeArtifactAuthInfoMapMutex.RUnlock()
 
 		p.ServeHTTP(w, r)
 	}
@@ -61,10 +77,14 @@ func ProxyResponseHandler(resEnv string) func(*http.Response) error {
 
 		contentType := r.Header.Get("Content-Type")
 
+		originalUrlResolverMutex.Lock()
 		originalUrl := originalUrlResolver[r.Request.RemoteAddr]
 		delete(originalUrlResolver, r.Request.RemoteAddr)
+		originalUrlResolverMutex.Unlock()
 
+		CodeArtifactAuthInfoMapMutex.RLock()
 		u, _ := url.Parse(CodeArtifactAuthInfoMap[resEnv].Url)
+		CodeArtifactAuthInfoMapMutex.RUnlock()
 		hostname := u.Host + ":443"
 
 		if r.StatusCode == 404 {
@@ -119,11 +139,15 @@ func ProxyResponseHandler(resEnv string) func(*http.Response) error {
 			oldContentResponse, _ := ioutil.ReadAll(body)
 			oldContentResponseStr := string(oldContentResponse)
 
+			CodeArtifactAuthInfoMapMutex.RLock()
+
 			resolvedHostname := strings.Replace(CodeArtifactAuthInfoMap[resEnv].Url, u.Host, hostname, -1)
 			newUrl := fmt.Sprintf("%s://%s/", originalUrl.Scheme, originalUrl.Host)
 
 			newResponseContent := strings.Replace(oldContentResponseStr, resolvedHostname, newUrl, -1)
 			newResponseContent = strings.Replace(newResponseContent, CodeArtifactAuthInfoMap[resEnv].Url, newUrl, -1)
+
+			CodeArtifactAuthInfoMapMutex.RUnlock()
 
 			r.Body = ioutil.NopCloser(strings.NewReader(newResponseContent))
 			r.ContentLength = int64(len(newResponseContent))
@@ -154,7 +178,9 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		splitToken := strings.Split(authToken, "Bearer ")
 		authToken = splitToken[1]
 
+		tokenToEnvMapMutex.RLock()
 		proxyEnv := tokenToEnvMap[authToken]
+		tokenToEnvMapMutex.RUnlock()
 
 		if fn, ok := hostProxy[proxyEnv]; ok {
 			ProxyRequestHandler(fn)(w, r)
@@ -162,7 +188,9 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if target, ok := hostTarget[proxyEnv]; ok {
+			CodeArtifactAuthInfoMapMutex.RLock()
 			remoteUrl, err := url.Parse(CodeArtifactAuthInfoMap[target].Url)
+			CodeArtifactAuthInfoMapMutex.RUnlock()
 			if err != nil {
 				log.Println("target parse fail:", err)
 				return
@@ -182,9 +210,11 @@ func (h *baseHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ProxyInit initialises the CodeArtifact proxy and starts the HTTP listener
 func ProxyInit() {
+	tokenToEnvMapMutex.Lock()
 	tokenToEnvMap["1cd67aa3-76a2-45dd-ab86-c27a6da0591c"] = "prod"
 	tokenToEnvMap["fce9ba15-7ce0-42db-8c9b-40eaf96e9b2c"] = "stage"
 	tokenToEnvMap["bf9d88e0-e97e-45e9-a492-766155ae69ac"] = "dev"
+	tokenToEnvMapMutex.Unlock()
 
 	h := &baseHandle{}
 	http.Handle("/", h)
